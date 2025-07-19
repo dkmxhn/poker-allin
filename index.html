@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Poker All-in Helper By Phoneix</title>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pokersolver@2.0.3/dist/pokersolver.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f4f4; padding: 20px; }
+    h2 { color: #333; }
+    .card-grid { display: flex; flex-wrap: wrap; gap: 4px; max-width: 420px; }
+    .card-option {
+      padding: 6px 8px;
+      border: 1px solid #aaa;
+      cursor: pointer;
+      border-radius: 4px;
+      background: #fff;
+      user-select: none;
+    }
+    .selected {
+      background: #4caf50;
+      color: #fff;
+    }
+    .red { color: red; }
+    #game, #result { margin-top: 15px; font-weight: bold; }
+    #alertBox {
+      display: none;
+      position: fixed;
+      top: 40%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #ff4444;
+      color: white;
+      font-size: 32px;
+      font-weight: bold;
+      padding: 30px 50px;
+      border-radius: 10px;
+      text-align: center;
+      animation: blink 1s infinite;
+      z-index: 9999;
+    }
+    @keyframes blink {
+      0%, 50%, 100% { opacity: 1; }
+      25%, 75% { opacity: 0.2; }
+    }
+    #resetBtn {
+      margin-top: 15px;
+      padding: 10px 20px;
+      background: #555;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h2>🃏 Poker All-in Helper By Phoneix</h2>
+
+  <div id="login">
+    <label>Nhập tên người chơi (A, B hoặc C):</label>
+    <input id="playerId" maxlength="1" placeholder="A">
+    <button onclick="login()">Bắt đầu</button>
+  </div>
+
+  <div id="game" style="display:none">
+    <h3 id="playerLabel"></h3>
+    <p>Chọn bài của bạn (chọn đúng 2 lá):</p>
+    <div id="cardGrid" class="card-grid"></div>
+    <button onclick="submitCard()">Lưu bài</button>
+    <button id="resetBtn" onclick="manualReset()">🔁 Reset ván bài</button>
+  </div>
+
+  <div id="result"></div>
+  <div id="alertBox"></div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBDXpq31YRr478Xezv-Q-V09tHfJbJPNzs",
+      authDomain: "poker-allin.firebaseapp.com",
+      databaseURL: "https://poker-allin-default-rtdb.firebaseio.com",
+      projectId: "poker-allin",
+      storageBucket: "poker-allin.firebasestorage.app",
+      messagingSenderId: "994085326808",
+      appId: "1:994085326808:web:2a5f0268e41d62521facad",
+      measurementId: "G-Q0817MG396"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const suits = ['s', 'h', 'd', 'c'];
+    const suitNames = {'s':'♠', 'h':'♥', 'd':'♦', 'c':'♣'};
+    const redSuits = ['h', 'd'];
+    const ranks = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
+    const rankValue = {'2': 2,'3': 3,'4': 4,'5': 5,'6': 6,'7': 7,'8': 8,'9': 9,'T': 10,'J': 11,'Q': 12,'K': 13,'A': 14};
+
+    let currentPlayer = null;
+    let selectedCards = [];
+    let resetTimer = null;
+
+    function login() {
+      const id = document.getElementById("playerId").value.toUpperCase();
+      if (!['A','B','C'].includes(id)) {
+        alert("Chỉ chấp nhận A, B hoặc C");
+        return;
+      }
+      currentPlayer = id;
+      document.getElementById("login").style.display = "none";
+      document.getElementById("game").style.display = "block";
+      document.getElementById("playerLabel").innerText = `Bạn là người chơi: ${id}`;
+      renderCardOptions();
+      listenForUpdates();
+    }
+
+    function renderCardOptions() {
+      const grid = document.getElementById("cardGrid");
+      grid.innerHTML = '';
+      ranks.forEach(r => {
+        suits.forEach(s => {
+          const code = r + s;
+          const div = document.createElement("div");
+          div.innerText = r + suitNames[s];
+          div.className = "card-option";
+          if (redSuits.includes(s)) div.classList.add("red");
+          div.dataset.code = code;
+          div.onclick = () => toggleCard(div, r, s);
+          grid.appendChild(div);
+        });
+      });
+    }
+
+    function toggleCard(el, r, s) {
+      const code = r + s;
+      if (el.classList.contains("selected")) {
+        el.classList.remove("selected");
+        selectedCards = selectedCards.filter(c => c.code !== code);
+      } else {
+        if (selectedCards.length >= 2) {
+          alert("Chỉ được chọn 2 lá bài");
+          return;
+        }
+        el.classList.add("selected");
+        selectedCards.push({ rank: rankValue[r], suit: s, code });
+      }
+    }
+
+    function convertToSolverFormat(card) {
+      const rankMap = {'T': '10'};
+      const rank = rankMap[card.code[0]] || card.code[0];
+      const suitMap = {'s': 's', 'h': 'h', 'd': 'd', 'c': 'c'};
+      return rank + suitMap[card.code[1]];
+    }
+
+    function simulateBestPlayer(cards) {
+      const allPlayers = Object.entries(cards).map(([player, hand]) => ({
+        player,
+        hand: [convertToSolverFormat(hand[0]), convertToSolverFormat(hand[1])]
+      }));
+
+      const deck = [];
+      for (let r of ranks) {
+        for (let s of suits) {
+          deck.push(r + s);
+        }
+      }
+      const used = allPlayers.flatMap(p => p.hand);
+      const remaining = deck.filter(c => !used.includes(c));
+      const combinations = [];
+      for (let i = 0; i < remaining.length; i++) {
+        for (let j = i + 1; j < remaining.length; j++) {
+          combinations.push([remaining[i], remaining[j]]);
+        }
+      }
+      const results = { 'A': 0, 'B': 0, 'C': 0 };
+      const totalSim = 300;
+      for (let k = 0; k < totalSim && k < combinations.length; k++) {
+        const simHand = combinations[k];
+        const hands = allPlayers.map(p => PokerSolver.Hand.solve([...p.hand, ...simHand]));
+        const winner = PokerSolver.Hand.winners(hands);
+        winner.forEach((w, idx) => {
+          const winnerIndex = hands.indexOf(w);
+          const winnerPlayer = allPlayers[winnerIndex].player;
+          results[winnerPlayer]++;
+        });
+      }
+      const sorted = Object.entries(results).sort((a, b) => b[1] - a[1]);
+      const best = sorted[0];
+      const total = Object.values(results).reduce((a, b) => a + b, 0);
+      const winRate = ((best[1] / total) * 100).toFixed(1);
+      const loseRate = (100 - winRate).toFixed(1);
+      return { player: best[0], loseRate };
+    }
+
+    function submitCard() {
+      if (selectedCards.length !== 2) {
+        alert("Bạn cần chọn đúng 2 lá bài");
+        return;
+      }
+      firebase.database().ref("cards/" + currentPlayer).set(selectedCards);
+      alert("✅ Đã lưu bài. Chờ các người chơi khác...");
+    }
+
+    function resetAfterDelay() {
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => {
+        firebase.database().ref("cards").remove();
+        document.getElementById("result").innerText = "🧹 Bài đã được reset. Mời chơi ván mới.";
+        document.getElementById("alertBox").style.display = "none";
+      }, 20000);
+    }
+
+    function manualReset() {
+      firebase.database().ref("cards").remove();
+      document.getElementById("result").innerText = "🔁 Đã reset ván bài thủ công.";
+      document.getElementById("alertBox").style.display = "none";
+    }
+
+    function listenForUpdates() {
+      firebase.database().ref("cards").on("value", snapshot => {
+        const cards = snapshot.val();
+        if (!cards) return;
+        const players = Object.keys(cards);
+        if (players.length === 3) {
+          const result = simulateBestPlayer(cards);
+          document.getElementById("result").innerText = `🧠 Phân tích equity: Nên all-in → Player ${result.player}`;
+          if (result.player === currentPlayer) {
+            document.getElementById("alertBox").innerText = `🟥 BÀI BẠN TO NHẤT\nTỉ lệ thua người thứ 4: ${result.loseRate}%`;
+            document.getElementById("alertBox").style.display = "block";
+          }
+          resetAfterDelay();
+        } else {
+          document.getElementById("result").innerText = "⌛ Đợi các người chơi khác nhập bài...";
+          document.getElementById("alertBox").style.display = "none";
+        }
+      });
+    }
+  </script>
+</body>
+</html>
