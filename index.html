@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Poker All-in By Phoneix</title>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f4f4; padding: 20px; }
+    h2 { color: #333; }
+    input, select, button { margin: 4px; }
+    #game, #result { margin-top: 15px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h2>🃏 Poker All-in By Phoneix</h2>
+
+  <div id="login">
+    <label>Nhập tên người chơi (A, B hoặc C):</label>
+    <input id="playerId" maxlength="1" placeholder="A">
+    <button onclick="login()">Bắt đầu</button>
+  </div>
+
+  <div id="game" style="display:none">
+    <h3 id="playerLabel"></h3>
+    <p>Nhập bài của bạn:</p>
+    <input id="c1_rank" maxlength="1" placeholder="A">
+    <select id="c1_suit"></select>
+    <input id="c2_rank" maxlength="1" placeholder="K">
+    <select id="c2_suit"></select>
+    <button onclick="submitCard()">Lưu bài</button>
+  </div>
+
+  <div id="result"></div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBDXpq31YRr478Xezv-Q-V09tHfJbJPNzs",
+      authDomain: "poker-allin.firebaseapp.com",
+      databaseURL: "https://poker-allin-default-rtdb.firebaseio.com",
+      projectId: "poker-allin",
+      storageBucket: "poker-allin.firebasestorage.app",
+      messagingSenderId: "994085326808",
+      appId: "1:994085326808:web:2a5f0268e41d62521facad",
+      measurementId: "G-Q0817MG396"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const suits = ['s', 'h', 'd', 'c'];
+    const suitNames = {'s':'♠', 'h':'♥', 'd':'♦', 'c':'♣'};
+    const rankValue = {'2': 2,'3': 3,'4': 4,'5': 5,'6': 6,'7': 7,'8': 8,'9': 9,'T': 10,'J': 11,'Q': 12,'K': 13,'A': 14};
+    let currentPlayer = null;
+    let resetTimer = null;
+
+    function createSuitOptions(id) {
+      const sel = document.getElementById(id);
+      suits.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.text = suitNames[s];
+        sel.appendChild(opt);
+      });
+    }
+    createSuitOptions("c1_suit");
+    createSuitOptions("c2_suit");
+
+    function login() {
+      const id = document.getElementById("playerId").value.toUpperCase();
+      if (!['A','B','C'].includes(id)) {
+        alert("Chỉ chấp nhận A, B hoặc C");
+        return;
+      }
+      currentPlayer = id;
+      document.getElementById("login").style.display = "none";
+      document.getElementById("game").style.display = "block";
+      document.getElementById("playerLabel").innerText = `Bạn là người chơi: ${id}`;
+      listenForUpdates();
+    }
+
+    function getCard(rankId, suitId) {
+      const r = document.getElementById(rankId).value.toUpperCase();
+      const s = document.getElementById(suitId).value;
+      if (!rankValue[r]) return null;
+      return { rank: rankValue[r], suit: s, code: r + s };
+    }
+
+    function handStrength(c1, c2) {
+      const r1 = c1.rank, r2 = c2.rank;
+      const suited = c1.suit === c2.suit;
+      const high = Math.max(r1, r2);
+      if (r1 === r2) return 100 + r1;
+      if (suited && Math.abs(r1 - r2) === 1) return 85 + high;
+      if (suited) return 70 + high;
+      if (Math.abs(r1 - r2) === 1) return 60 + high;
+      return high;
+    }
+
+    function submitCard() {
+      const c1 = getCard("c1_rank","c1_suit");
+      const c2 = getCard("c2_rank","c2_suit");
+      if (!c1 || !c2) {
+        alert("Vui lòng nhập đủ rank hợp lệ");
+        return;
+      }
+      firebase.database().ref("cards/" + currentPlayer).set([c1, c2]);
+      alert("✅ Đã lưu bài. Chờ các người chơi khác...");
+    }
+
+    function resetAfterDelay() {
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => {
+        firebase.database().ref("cards").remove();
+        document.getElementById("result").innerText = "🧹 Bài đã được reset. Mời chơi ván mới.";
+      }, 20000);
+    }
+
+    function listenForUpdates() {
+      firebase.database().ref("cards").on("value", snapshot => {
+        const cards = snapshot.val();
+        if (!cards) return;
+        const players = Object.keys(cards);
+        if (players.length === 3) {
+          const allCards = Object.values(cards).flat();
+          const used = new Set(allCards.map(c => c.code));
+          if (used.size < 6) {
+            document.getElementById("result").innerText = "⚠️ Có lá bài trùng nhau.";
+            return;
+          }
+          const scores = [
+            {player: 'A', score: handStrength(...cards['A'])},
+            {player: 'B', score: handStrength(...cards['B'])},
+            {player: 'C', score: handStrength(...cards['C'])}
+          ];
+          scores.sort((a,b) => b.score - a.score);
+          const best = scores[0];
+          document.getElementById("result").innerText = `✅ Người nên all-in: Player ${best.player} (Điểm: ${best.score})`;
+          resetAfterDelay();
+        } else {
+          document.getElementById("result").innerText = "⌛ Đợi các người chơi khác nhập bài...";
+        }
+      });
+    }
+  </script>
+</body>
+</html>
